@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+data/school.db
+data/imports/*.csv
+!data/imports/.gitkeep
+.DS_Store
+.streamlit/secrets.toml
