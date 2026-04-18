@@ -7,3 +7,5 @@ data/imports/*.csv
 !data/imports/.gitkeep
 .DS_Store
 .streamlit/secrets.toml
+.claude/
+
