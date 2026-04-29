@@ -214,11 +214,13 @@ def _extract_assistant_text(msg) -> str:
 
 async def _agentic_procurement_query(system_prompt: str, user_prompt: str, context: str) -> str:
     """模組 A 進階：採購法 RAG agent。"""
+    from datetime import datetime
     from claude_agent_sdk import (
         query,
         tool,
         create_sdk_mcp_server,
         ClaudeAgentOptions,
+        HookMatcher,
     )
 
     @tool(
@@ -254,6 +256,14 @@ async def _agentic_procurement_query(system_prompt: str, user_prompt: str, conte
             return {"content": [{"type": "text", "text": f"未找到包含「{keyword}」的條文。"}]}
         return {"content": [{"type": "text", "text": "\n\n---\n\n".join(hits)}]}
 
+    async def log_law_query(input_data, tool_use_id, context):
+        keyword = input_data.get("tool_input", {}).get("keyword", "")
+        log_path = BASE / "data" / "audit_law.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"{datetime.now().isoformat()}\t{keyword}\n")
+        return {}
+
     server = create_sdk_mcp_server(name="procurement-law", version="1.0.0", tools=[search_law])
     full_user = f"{context}\n\n---\n\n{user_prompt}" if context else user_prompt
     augmented_sys = (
@@ -271,6 +281,14 @@ async def _agentic_procurement_query(system_prompt: str, user_prompt: str, conte
             "Glob", "Grep", "WebSearch", "WebFetch",
         ],
         setting_sources=[],
+        hooks={
+            "PostToolUse": [
+                HookMatcher(
+                    matcher="mcp__law__search_procurement_law",
+                    hooks=[log_law_query],
+                ),
+            ],
+        },
         model="claude-sonnet-4-5",
         max_turns=8,
     )
@@ -308,6 +326,7 @@ async def _agentic_meeting_to_calendar(transcript: str) -> str:
         tool,
         create_sdk_mcp_server,
         ClaudeAgentOptions,
+        HookMatcher,
     )
 
     @tool(
@@ -315,13 +334,19 @@ async def _agentic_meeting_to_calendar(transcript: str) -> str:
         "把單一決議事項或待辦寫入 macOS 行事曆。datetime 格式必須為 YYYY-MM-DD HH:MM。",
         {"title": str, "datetime": str, "notes": str},
     )
+    def _as_quote(s: str) -> str:
+        # AppleScript 字串字面值轉義：壓平換行 → escape backslash → escape quote
+        s = s.replace("\r", "").replace("\n", " ")
+        s = s.replace("\\", "\\\\").replace('"', '\\"')
+        return '"' + s + '"'
+
     async def add_to_calendar(args):
         try:
             dt = datetime.strptime(args["datetime"], "%Y-%m-%d %H:%M")
         except ValueError:
             return {"content": [{"type": "text", "text": f"❌ 日期格式錯誤：{args['datetime']}"}]}
-        title = args["title"].replace('"', "'").replace("\\", "")
-        notes = args["notes"].replace('"', "'").replace("\\", "")
+        if dt < datetime.now():
+            return {"content": [{"type": "text", "text": f"❌ 日期已過：{args['datetime']}（agent 應重新推算未來時間）"}]}
         script = f'''tell application "Calendar"
     set theDate to current date
     set year of theDate to {dt.year}
@@ -332,19 +357,31 @@ async def _agentic_meeting_to_calendar(transcript: str) -> str:
     set seconds of theDate to 0
     set endDate to theDate + 60 * 60
     tell calendar 1
-        make new event with properties {{summary:"{title}", start date:theDate, end date:endDate, description:"{notes}"}}
+        make new event with properties {{summary:{_as_quote(args["title"])}, start date:theDate, end date:endDate, description:{_as_quote(args["notes"])}}}
     end tell
 end tell'''
         try:
             subprocess.run(
-                ["osascript", "-e", script],
+                ["osascript", "-"],
+                input=script,
                 check=True, capture_output=True, timeout=15, text=True,
             )
-            return {"content": [{"type": "text", "text": f"✅ 已加入：{title} @ {args['datetime']}"}]}
+            return {"content": [{"type": "text", "text": f"✅ 已加入：{args['title']} @ {args['datetime']}"}]}
         except subprocess.CalledProcessError as e:
             return {"content": [{"type": "text", "text": f"❌ 加入失敗：{e.stderr or str(e)}"}]}
         except subprocess.TimeoutExpired:
             return {"content": [{"type": "text", "text": "❌ Calendar 沒回應（可能權限未授予）"}]}
+
+    async def log_calendar_event(input_data, tool_use_id, context):
+        ti = input_data.get("tool_input", {})
+        log_path = BASE / "data" / "audit_calendar.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(
+                f"{datetime.now().isoformat()}\t"
+                f"{ti.get('datetime','')}\t{ti.get('title','')}\n"
+            )
+        return {}
 
     server = create_sdk_mcp_server(name="cal", version="1.0.0", tools=[add_to_calendar])
     today = datetime.now().strftime("%Y-%m-%d")
@@ -373,6 +410,14 @@ end tell'''
             "Glob", "Grep", "WebSearch", "WebFetch",
         ],
         setting_sources=[],
+        hooks={
+            "PostToolUse": [
+                HookMatcher(
+                    matcher="mcp__cal__add_to_calendar",
+                    hooks=[log_calendar_event],
+                ),
+            ],
+        },
         model="claude-sonnet-4-5",
         max_turns=20,
     )
@@ -449,8 +494,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-tab_home, tab_a, tab_b, tab_c, tab_d = st.tabs(
-    ["🏠 首頁", "📋 採購法顧問", "📝 公文草稿", "🎙️ 會議記錄", "🏫 本校資料"]
+tab_home, tab_arch, tab_a, tab_b, tab_c, tab_d = st.tabs(
+    ["🏠 首頁", "🏛️ 系統架構", "📋 採購法顧問", "📝 公文草稿", "🎙️ 會議記錄", "🏫 本校資料"]
 )
 
 # ===== 首頁:三模組總覽 =====
@@ -492,6 +537,121 @@ with tab_home:
         "💡 **一表通精神**：本校資料只填一次（見「🏫 本校資料」tab），"
         "三模組會自動帶入為 prompt context。點擊上方任一模組 tab 開始使用。"
     )
+
+# ===== 系統架構：母系統願景 =====
+with tab_arch:
+    st.subheader("行政減負系統 · 全貌")
+    st.caption("本 app（小校一表通）是「**行政減負系統**」的子系統 — 是其中 S03 + S02 + M07 三個項目的 web 實作。")
+
+    st.markdown("### 🎯 設計哲學")
+    st.markdown(
+        """
+- **行政減負，不是稽核** — 看板用「需要支援」不用「逾期」，語彙刻意溫和
+- **填一次不再填第二次** — S12 計畫案件庫是入口，其他子系統自動回寫
+- **承辦人省力 > 主任可視 > 校長聚合** — 順序不可顛倒
+        """
+    )
+
+    with st.expander("🧠 七層視角", expanded=False):
+        st.markdown(
+            """
+| 視角 | 看什麼 |
+|------|--------|
+| 🎩 校長 | 待核決 / 跨處室協調 / 高風險 |
+| 💰 主計（=人事幹事兼任） | S10 經費控管核章彙整 |
+| 🧰 總務主任 | S03 採購 / S09 防災 / S10 經費 |
+| 🏫 教導主任 | S01 校事 / S11 人事派發（親辦）+ 兩組長上報案 |
+| 📘 教務組長 | S06 課程 / S07 研習 / S02（教務類公文） |
+| 🎌 訓導組長 | S04 輔導 / S08 校外教學 / S02（訓育類公文） |
+| 👤 承辦人 | 自己手上的案件（S05 特教承辦人直達主任） |
+            """
+        )
+
+    st.markdown("### 📐 整體架構（13 子系統 + 3 共用模組）")
+    st.code(
+        """
+                              🏛️ 行政減負系統
+                         (vault: 08_校務減負系統)
+                        ▶ 哲學：行政減負，不是稽核 ◀
+                                       │
+       ┌───────────────────────────────┼───────────────────────────────┐
+       ▼                               ▼                               ▼
+  🧠 七層視角                    📦 13 子系統                    🔧 3 共用模組
+
+  🎩 校長        ┌────────────┬────────────┬────────────┐
+  💰 主計        │ 📘 教導處  │ 🧰 總務處  │ 🌐 跨處室  │      M07 會議記錄
+  🧰 總務主任    │            │            │            │       (錄音→結構化)
+  🏫 教導主任    │ S01 校事 ✅│ S03 採購 ✅│ S12 計畫案 │
+  📘 教務組長    │ S02 公文🚧 │ S09 防災🚧 │  件庫 🚧P1 │      S12 計畫案件庫
+  🎌 訓導組長    │ S04 輔導🚧 │ S10 經費🚧 │ S13 媒體   │       (一份 md 從
+  👤 承辦人      │ S05 特教🚧 │            │  發佈 🚧   │        立案到結案)
+                 │ S06 課程🚧 │            │            │
+                 │ S07 研習🚧 │            │            │      S13 媒體發佈
+                 │ S08 校外🚧 │            │            │       (活動→新聞稿)
+                 │ S11 人事🚧 │            │            │
+                 └────────────┴────────────┴────────────┘
+                                       │
+                                       ▼
+                              💻 前端實作
+       ┌───────────────────────────────┼───────────────────────────────┐
+       ▼                               ▼                               ▼
+   小校一表通 (本 app)            CLI Skill                     UI 原型
+   (Streamlit web)              (Claude Code)                 (6 HTML)
+
+   模組 A → S03 採購 ✅          /校事文書 → S01 ✅           總入口 Portal
+   模組 B → S02 公文 🚧          /採購法 → S03/06 ✅           校長儀表板
+   模組 C → M07 會議 🚧          /關懷 → S12/S13 🚧            其他 4 個
+        """,
+        language="text",
+    )
+
+    with st.expander("🔄 連動主流程（S12 為減負入口）", expanded=False):
+        st.code(
+            """
+              👤 承辦人在 S12 立案（一份 md）
+                              │
+              ┌───────────────┼───────────────┬────────────────┐
+              ▼               ▼               ▼                ▼
+        📨 S02 公文      💰 S10 經費     🎙️ M07 會議      👥 S11 派發
+        自動關聯案號     自動回寫執行率   錄音→結構化       子任務給教師
+              │               │               │                │
+              └───────────────┴───────┬───────┴────────────────┘
+                                      ▼
+                          📡 通知整合層
+                       Email / 行事曆 / LINE
+            """,
+            language="text",
+        )
+
+    st.markdown("### 📚 學術 USP（雙軌文獻交叉驗證 30 篇 SSCI/arXiv）")
+    st.success(
+        "「**小校 × 總務 × 中文法規 × Tool use 寫入行事曆**」四維齊全的整合系統，"
+        "在 SSCI 文獻為**真空地帶**。"
+    )
+    st.markdown("**3 篇必引文獻**（5/11 校長遴選簡報用）：")
+    st.markdown(
+        """
+| # | 文獻 | Cites | 用途 |
+|---|------|-------|------|
+| 1 | **Magesh, Surani & Ho 2025**（Stanford JELS）| 42 | 商用 RAG 法律工具仍有 17-33% 錯誤率 → 模組 A 設計差異化 |
+| 2 | **Berkovich 2025**（Frontiers in Education）| new | 校長 GenAI 採用 early majority → xiaoxiao 整體 why |
+| 3 | **Chen et al. 2025**（Adv Eng Inform）| 17 | Meet2Mitigate 框架 → 模組 C 升級藍本 |
+        """
+    )
+
+    with st.expander("🎯 投稿期刊路線圖（學術延伸）", expanded=False):
+        st.markdown(
+            """
+- 🥇 **Educational Management Administration & Leadership (EMAL)** — Q1 SSCI、近 2 年已收 5+ 篇 generative AI × school leadership
+- 🥈 **Education and Information Technologies** — Q1 SSCI、UTAUT 框架友善
+- 🥉 **Frontiers in Education** — Q2 SSCI、OA 較快、台灣 case study 友善
+- ⚠️ **避雷 Computers & Education**：主題偏教與學非行政
+            """
+        )
+
+    st.divider()
+    st.caption("📂 詳細資料：vault `~/leeaoomacsecondbrain/08_校務減負系統/` (行政減負系統知識庫)")
+
 
 # ===== 模組 A:採購法顧問 =====
 with tab_a:
