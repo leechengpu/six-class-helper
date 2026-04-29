@@ -17,8 +17,8 @@ WARN = "#C0392B"
 BG_SOFT = "#F4F6F8"
 
 st.set_page_config(
-    page_title="總務小幫手 · 六班小校 AI 助理套件",
-    page_icon="🏫",
+    page_title="校長 AI 副手系統 · 行政減負平台",
+    page_icon="🎩",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -476,9 +476,9 @@ with st.sidebar:
 st.markdown(
     f"""
 <div class="hero">
-    <div class="brand">總務小幫手 · 六班小校 AI 助理套件</div>
-    <h1>總務主任不再孤軍奮戰。</h1>
-    <p>採購有顧問、公文有草稿、會議有記錄 — {school_name}</p>
+    <div class="brand">校長 AI 副手系統 · 行政減負平台</div>
+    <h1>校長不孤單。13 條管考線，13 個 AI 副手分擔。</h1>
+    <p>從教師到校長,AI 陪我走每一步 — {school_name} {principal}</p>
 </div>
 """,
     unsafe_allow_html=True,
@@ -487,26 +487,106 @@ st.markdown(
 st.markdown(
     """
 <div class="pain-box">
-    <div class="quote">📌 六班小校,總務主任一人兼「<b>採購 + 公文 + 總務 + 財產 + 工程</b>」,每件事都是第一次做。</div>
-    <div class="sub">AI 做雜事、人做有溫度的事 — 把重複的腦力勞動接走,讓總務主任有時間去議價、溝通、解決真正的問題。</div>
+    <div class="quote">📌 校長一人面對 13 條管考線（採購、公文、校事、輔導、特教、課程、研習、校外、防災、經費、人事、計畫、媒體）— 每條都要 sign-off,但每條都不可能精通。</div>
+    <div class="sub">AI 副手分擔每條線,校長只看「<b>需要我裁示的</b>」+「<b>有風險的</b>」+「<b>跨處室卡住的</b>」。把人留給有溫度的事。</div>
 </div>
 """,
     unsafe_allow_html=True,
 )
 
 tab_home, tab_arch, tab_a, tab_b, tab_c, tab_d = st.tabs(
-    ["🏠 首頁", "🏛️ 系統架構", "📋 採購法顧問", "📝 公文草稿", "🎙️ 會議記錄", "🏫 本校資料"]
+    ["📊 校長儀表板", "🏛️ 系統架構", "📋 採購法顧問", "📝 公文草稿", "🎙️ 會議記錄", "🏫 本校資料"]
 )
 
-# ===== 首頁:三模組總覽 =====
+# ===== 校長儀表板（首頁）=====
 with tab_home:
+    st.subheader(f"🎩 校長視角 · {school_name}")
+    st.caption("只看：需要我裁示的 + 有風險的 + 跨處室卡住的")
+
+    # 4 metric cards (mock 數據,demo 用)
+    m1, m2, m3, m4 = st.columns(4)
+    with m1:
+        st.metric("📍 今日待我核決", "5 件", "↑ 比昨日 +2")
+    with m2:
+        st.metric("🚨 高風險案件", "2 件", "S03-001 / S01-003")
+    with m3:
+        st.metric("✅ 主任已處理", "18 件", "↑ 比上週 +6")
+    with m4:
+        st.metric("📅 本週新進案件", "23 件", "S02 公文 14 / S03 採購 5 / 其他 4")
+
+    st.markdown("---")
+
+    # 13 子系統 traffic light (校長一目掌全校)
+    st.markdown("### 🚦 13 子系統 · 全校溫度計")
+    st.caption("綠 = 正常 / 黃 = 接近時效 / 紅 = 需校長介入")
+
+    sub_l, sub_m, sub_r = st.columns(3)
+    with sub_l:
+        st.markdown("**📘 教導處**")
+        st.markdown(
+            """
+- 🟢 S01 校事會議 *(2 結案中)*
+- 🟡 S02 公文管考 *(3 件 ≤ 2 日到期)*
+- 🟢 S04 學生輔導 *(平穩)*
+- 🟢 S05 特教 IEP *(下次會議 5/15)*
+- 🟢 S06 課程計畫 *(送審中)*
+- 🟡 S07 研習時數 *(2 位老師時數不足)*
+- 🟢 S08 校外教學 *(下月安排中)*
+- 🟢 S11 人事派發 *(待派 3 件)*
+            """
+        )
+    with sub_m:
+        st.markdown("**🧰 總務處**")
+        st.markdown(
+            """
+- 🔴 S03 政府採購 *(45 萬平板簽呈待我核)*
+- 🟢 S09 防災演練 *(下次 5/12)*
+- 🟡 S10 經費控管 *(主計駁回 1 件待補件)*
+            """
+        )
+    with sub_r:
+        st.markdown("**🌐 跨處室**")
+        st.markdown(
+            """
+- 🟢 S12 計畫案件庫 *(8 案執行中)*
+- 🟢 S13 媒體發佈 *(本週 2 則)*
+            """
+        )
+
+    st.markdown("---")
+
+    # 7 層視角覆蓋率
+    st.markdown("### 🧠 7 層視角覆蓋率（系統可看見的待辦數）")
+    coverage = [
+        ("🎩 校長", 5, 5),
+        ("💰 主計", 1, 5),
+        ("🧰 總務主任", 8, 12),
+        ("🏫 教導主任", 7, 10),
+        ("📘 教務組長", 4, 6),
+        ("🎌 訓導組長", 3, 5),
+        ("👤 承辦人", 23, 30),
+    ]
+    for role, current, total in coverage:
+        col_role, col_bar, col_num = st.columns([2, 5, 1])
+        with col_role:
+            st.markdown(f"**{role}**")
+        with col_bar:
+            st.progress(current / total if total else 0)
+        with col_num:
+            st.caption(f"{current} / {total}")
+
+    st.markdown("---")
+
+    # 三個 AI 副手（從校長視角看）
+    st.markdown("### 🤖 我已派出 3 個 AI 副手（其餘 10 條線規劃中）")
+    st.caption("校長不直接用這些工具 — 是『派給承辦人/總務/組長使用』的 AI 副手。校長只看結果。")
     c1, c2, c3 = st.columns(3)
     with c1:
         st.markdown(
             """
 <div class="module-card a">
-<div class="module-title">📋 A. 採購法顧問</div>
-<div class="module-desc">彙編 35 版 684 頁法條、風險警示、簽呈檢查</div>
+<div class="module-title">📋 A. 採購法 AI 副手</div>
+<div class="module-desc">服務「總務主任」<br>彙編 35 版 684 頁法條 RAG 查詢、風險警示、簽呈檢查<br>→ 對應 <b>S03 採購</b></div>
 </div>
 """,
             unsafe_allow_html=True,
@@ -515,8 +595,8 @@ with tab_home:
         st.markdown(
             """
 <div class="module-card b">
-<div class="module-title">📝 B. 公文草稿</div>
-<div class="module-desc">三段式格式自動產出,可匯 docx,15 分鐘變 30 秒</div>
+<div class="module-title">📝 B. 公文 AI 副手</div>
+<div class="module-desc">服務「組長與承辦人」<br>三段式公文 30 秒草稿,15 分鐘 → 30 秒<br>→ 對應 <b>S02 公文管考</b></div>
 </div>
 """,
             unsafe_allow_html=True,
@@ -525,8 +605,8 @@ with tab_home:
         st.markdown(
             """
 <div class="module-card c">
-<div class="module-title">🎙️ C. 會議記錄</div>
-<div class="module-desc">逐字稿 30 秒 → 摘要 + 決議 + 待辦,每月省 3 小時、記錄者回歸討論</div>
+<div class="module-title">🎙️ C. 會議 AI 副手</div>
+<div class="module-desc">服務「會議記錄者」<br>逐字稿 → 摘要+決議+待辦,並自動寫入行事曆<br>→ 對應 <b>M07 共用模組</b></div>
 </div>
 """,
             unsafe_allow_html=True,
@@ -534,8 +614,9 @@ with tab_home:
 
     st.markdown("")
     st.info(
-        "💡 **一表通精神**：本校資料只填一次（見「🏫 本校資料」tab），"
-        "三模組會自動帶入為 prompt context。點擊上方任一模組 tab 開始使用。"
+        "💡 **校長角色**：派工 + 把關。不事必躬親，不接管承辦人工作。"
+        "把校長從「翻簽辦清單追進度」解放，從「決策」回歸「願景」。"
+        "點上方 tab「🏛️ 系統架構」看完整 13 子系統規劃。"
     )
 
 # ===== 系統架構：母系統願景 =====
