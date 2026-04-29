@@ -2,3 +2,7 @@ streamlit>=1.30.0
 anthropic>=0.40.0
 pandas>=2.0.0
 python-dotenv>=1.0.0
+
+# 進階 Agent 模式（本機限定，Streamlit Cloud 沒有 claude CLI 不會啟用）
+claude-agent-sdk>=0.1.71
+anyio>=4.0.0
