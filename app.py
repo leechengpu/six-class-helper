@@ -266,6 +266,11 @@ async def _agentic_procurement_query(system_prompt: str, user_prompt: str, conte
         system_prompt=augmented_sys,
         mcp_servers={"law": server},
         allowed_tools=["mcp__law__search_procurement_law"],
+        disallowed_tools=[
+            "Read", "Write", "Edit", "Bash",
+            "Glob", "Grep", "WebSearch", "WebFetch",
+        ],
+        setting_sources=[],
         model="claude-sonnet-4-5",
         max_turns=8,
     )
@@ -279,7 +284,19 @@ async def _agentic_procurement_query(system_prompt: str, user_prompt: str, conte
 
 def call_claude_agentic_procurement(system_prompt: str, user_prompt: str, context: str = "") -> str:
     import anyio
-    return anyio.run(_agentic_procurement_query, system_prompt, user_prompt, context)
+    from claude_agent_sdk import (
+        CLINotFoundError, CLIConnectionError, ProcessError, CLIJSONDecodeError,
+    )
+    try:
+        return anyio.run(_agentic_procurement_query, system_prompt, user_prompt, context)
+    except CLINotFoundError:
+        raise RuntimeError("找不到 Claude Code CLI，請執行：npm i -g @anthropic-ai/claude-code")
+    except ProcessError as e:
+        raise RuntimeError(f"Claude CLI 執行失敗（exit {e.exit_code}）")
+    except CLIJSONDecodeError as e:
+        raise RuntimeError(f"Claude CLI 回應解析錯誤：{e}")
+    except CLIConnectionError as e:
+        raise RuntimeError(f"Claude CLI 連線錯誤：{e}")
 
 
 async def _agentic_meeting_to_calendar(transcript: str) -> str:
@@ -351,6 +368,11 @@ end tell'''
         system_prompt=sys_prompt,
         mcp_servers={"cal": server},
         allowed_tools=["mcp__cal__add_to_calendar"],
+        disallowed_tools=[
+            "Read", "Write", "Edit", "Bash",
+            "Glob", "Grep", "WebSearch", "WebFetch",
+        ],
+        setting_sources=[],
         model="claude-sonnet-4-5",
         max_turns=20,
     )
@@ -364,7 +386,19 @@ end tell'''
 
 def call_claude_agentic_meeting_to_calendar(transcript: str) -> str:
     import anyio
-    return anyio.run(_agentic_meeting_to_calendar, transcript)
+    from claude_agent_sdk import (
+        CLINotFoundError, CLIConnectionError, ProcessError, CLIJSONDecodeError,
+    )
+    try:
+        return anyio.run(_agentic_meeting_to_calendar, transcript)
+    except CLINotFoundError:
+        raise RuntimeError("找不到 Claude Code CLI，請執行：npm i -g @anthropic-ai/claude-code")
+    except ProcessError as e:
+        raise RuntimeError(f"Claude CLI 執行失敗（exit {e.exit_code}）")
+    except CLIJSONDecodeError as e:
+        raise RuntimeError(f"Claude CLI 回應解析錯誤：{e}")
+    except CLIConnectionError as e:
+        raise RuntimeError(f"Claude CLI 連線錯誤：{e}")
 
 
 ensure_db()
@@ -504,12 +538,17 @@ with tab_a:
             with st.spinner(spinner_msg):
                 if API_MODE == "live" and manual_ask:
                     ctx = f"本校 context:{school_name} / 校長 {principal}"
+                    ans = ""
                     if proc_agent_mode:
-                        ans = call_claude_agentic_procurement(load_prompt("procurement_qa.md"), q, ctx)
-                        st.success("🔬 RAG 模式：已查詢採購法彙編（35 版 684 頁）")
+                        try:
+                            ans = call_claude_agentic_procurement(load_prompt("procurement_qa.md"), q, ctx)
+                            st.success("🔬 RAG 模式：已查詢採購法彙編（35 版 684 頁）")
+                        except RuntimeError as e:
+                            st.error(f"❌ 進階模式失敗：{e}")
                     else:
                         ans = call_claude(load_prompt("procurement_qa.md"), q, ctx)
-                    st.markdown(ans)
+                    if ans:
+                        st.markdown(ans)
                 else:
                     demo = load_demo("procurement_demo.md")
                     # 判斷情境:auto_case 優先,否則從文字推
