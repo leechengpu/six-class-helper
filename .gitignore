@@ -2,6 +2,10 @@
 __pycache__/
 *.pyc
 .env
+.pytest_cache/
+htmlcov/
+coverage.xml
+.coverage
 data/school.db
 data/imports/*.csv
 !data/imports/.gitkeep
