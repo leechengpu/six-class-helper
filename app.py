@@ -1,14 +1,19 @@
-import os
-import sqlite3
-from pathlib import Path
-
-import pandas as pd
 import streamlit as st
 
-BASE = Path(__file__).parent
-DB_PATH = BASE / "data" / "school.db"
-PROMPTS = BASE / "prompts"
-DEMOS = BASE / "tests" / "demo_cases"
+from agents import (
+    _agent_sdk_available,
+    call_claude_agentic_meeting_to_calendar,
+    call_claude_agentic_procurement,
+)
+from claude_client import call_claude, get_api_mode
+from db import ensure_db, load_meta, meta_value
+from prompts import load_demo, load_prompt
+from validators import (
+    InputValidationError,
+    MEDIUM_MAX_CHARS,
+    SHORT_MAX_CHARS,
+    validate_user_input,
+)
 
 PRIMARY = "#1B4F72"
 ACCENT = "#E86C00"
@@ -104,346 +109,6 @@ section[data-testid="stSidebar"] {{ background: {BG_SOFT}; }}
 """,
     unsafe_allow_html=True,
 )
-
-
-SCHEMA_SQL = BASE / "schemas" / "create_tables.sql"
-SEED_SQL = BASE / "tests" / "demo_data.sql"
-
-
-def ensure_db():
-    """首次啟動自建 DB（供 Streamlit Community Cloud 使用，雲端檔案系統是短暫的）。"""
-    if DB_PATH.exists():
-        return
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH))
-    try:
-        if SCHEMA_SQL.exists():
-            conn.executescript(SCHEMA_SQL.read_text(encoding="utf-8"))
-        if SEED_SQL.exists():
-            conn.executescript(SEED_SQL.read_text(encoding="utf-8"))
-        conn.commit()
-    finally:
-        conn.close()
-
-
-@st.cache_resource
-def get_conn():
-    ensure_db()
-    return sqlite3.connect(str(DB_PATH), check_same_thread=False)
-
-
-@st.cache_data
-def load_meta():
-    return pd.read_sql_query("SELECT * FROM school_meta", get_conn())
-
-
-def meta_value(df, name, default="—"):
-    row = df[df["field_name"] == name]
-    return row["field_value"].iloc[0] if not row.empty else default
-
-
-def load_prompt(name: str) -> str:
-    p = PROMPTS / name
-    return p.read_text(encoding="utf-8") if p.exists() else ""
-
-
-def load_demo(name: str) -> str:
-    p = DEMOS / name
-    return p.read_text(encoding="utf-8") if p.exists() else "(demo 檔案不存在)"
-
-
-def get_api_mode():
-    key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if key:
-        return "live"
-    try:
-        key = st.secrets.get("ANTHROPIC_API_KEY", "")
-        if key:
-            os.environ["ANTHROPIC_API_KEY"] = key
-            return "live"
-    except Exception:
-        pass
-    return "demo"
-
-
-def call_claude(system_prompt: str, user_prompt: str, context: str = "") -> str:
-    try:
-        import anthropic
-    except ImportError:
-        return "⚠️ 未安裝 anthropic SDK,請執行 `pip install anthropic`"
-
-    client = anthropic.Anthropic()
-    full_user = f"{context}\n\n---\n\n{user_prompt}" if context else user_prompt
-    msg = client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=2048,
-        system=system_prompt,
-        messages=[{"role": "user", "content": full_user}],
-    )
-    return msg.content[0].text
-
-
-# ============================================================
-# 🧪 進階模式：Claude Agent SDK + Tool Use
-# - 本機限定（需安裝 Claude Code CLI: `npm i -g @anthropic-ai/claude-code`）
-# - Streamlit Cloud 不支援，UI 端會自動隱藏切換鈕
-# ============================================================
-
-def _agent_sdk_available() -> bool:
-    """檢查 Agent SDK + claude CLI 都可用。"""
-    import shutil
-    if not shutil.which("claude"):
-        return False
-    try:
-        import claude_agent_sdk  # noqa: F401
-        return True
-    except ImportError:
-        return False
-
-
-def _extract_assistant_text(msg) -> str:
-    """從 Agent SDK 串流訊息抽出最終 assistant 文字（跳過 tool use blocks）。"""
-    if type(msg).__name__ != "AssistantMessage":
-        return ""
-    parts = []
-    for block in getattr(msg, "content", []):
-        if type(block).__name__ == "TextBlock":
-            parts.append(getattr(block, "text", ""))
-    return "\n".join(parts)
-
-
-async def _agentic_procurement_query(system_prompt: str, user_prompt: str, context: str) -> str:
-    """模組 A 進階：採購法 RAG agent。"""
-    from datetime import datetime
-    from claude_agent_sdk import (
-        query,
-        tool,
-        create_sdk_mcp_server,
-        ClaudeAgentOptions,
-        HookMatcher,
-    )
-
-    @tool(
-        "search_procurement_law",
-        "從政府採購法彙編（35 版 684 頁，含本文/施行細則/子法/GPA/相關法令）查詢條文。"
-        "傳入關鍵字（條號如「第 22 條」、術語如「公告金額」「綁標」「最有利標」），"
-        "回傳前 8 筆命中的上下文（含檔名、行號、前後 2 行）。",
-        {"keyword": str},
-    )
-    async def search_law(args):
-        keyword = args["keyword"]
-        law_dir = BASE / "data" / "procurement_law"
-        if not law_dir.exists():
-            return {"content": [{"type": "text", "text": "❌ 法規資料夾不存在"}]}
-        hits = []
-        for md_file in sorted(law_dir.glob("*.md")):
-            try:
-                text = md_file.read_text(encoding="utf-8")
-            except Exception:
-                continue
-            lines = text.split("\n")
-            for i, line in enumerate(lines):
-                if keyword in line:
-                    start = max(0, i - 2)
-                    end = min(len(lines), i + 3)
-                    ctx = "\n".join(lines[start:end])
-                    hits.append(f"📄 {md_file.name}:{i+1}\n{ctx}")
-                    if len(hits) >= 8:
-                        break
-            if len(hits) >= 8:
-                break
-        if not hits:
-            return {"content": [{"type": "text", "text": f"未找到包含「{keyword}」的條文。"}]}
-        return {"content": [{"type": "text", "text": "\n\n---\n\n".join(hits)}]}
-
-    async def log_law_query(input_data, tool_use_id, context):
-        keyword = input_data.get("tool_input", {}).get("keyword", "")
-        log_path = BASE / "data" / "audit_law.log"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(log_path, "a", encoding="utf-8") as f:
-            f.write(f"{datetime.now().isoformat()}\t{keyword}\n")
-        return {}
-
-    server = create_sdk_mcp_server(name="procurement-law", version="1.0.0", tools=[search_law])
-    full_user = f"{context}\n\n---\n\n{user_prompt}" if context else user_prompt
-    augmented_sys = (
-        system_prompt
-        + "\n\n## 🚨 進階模式紀律\n"
-        + "你**必須**先呼叫 search_procurement_law 工具查詢真實條文，再回答。"
-        + "禁止僅憑記憶引用條號。每個引用條文都要附查詢來源（檔名）。"
-    )
-    options = ClaudeAgentOptions(
-        system_prompt=augmented_sys,
-        mcp_servers={"law": server},
-        allowed_tools=["mcp__law__search_procurement_law"],
-        disallowed_tools=[
-            "Read", "Write", "Edit", "Bash",
-            "Glob", "Grep", "WebSearch", "WebFetch",
-        ],
-        setting_sources=[],
-        hooks={
-            "PostToolUse": [
-                HookMatcher(
-                    matcher="mcp__law__search_procurement_law",
-                    hooks=[log_law_query],
-                ),
-            ],
-        },
-        model="claude-sonnet-4-5",
-        max_turns=8,
-    )
-    chunks = []
-    async for msg in query(prompt=full_user, options=options):
-        text = _extract_assistant_text(msg)
-        if text:
-            chunks.append(text)
-    return "\n\n".join(chunks) if chunks else "（無回應）"
-
-
-def call_claude_agentic_procurement(system_prompt: str, user_prompt: str, context: str = "") -> str:
-    import anyio
-    from claude_agent_sdk import (
-        CLINotFoundError, CLIConnectionError, ProcessError, CLIJSONDecodeError,
-    )
-    try:
-        return anyio.run(_agentic_procurement_query, system_prompt, user_prompt, context)
-    except CLINotFoundError:
-        raise RuntimeError("找不到 Claude Code CLI，請執行：npm i -g @anthropic-ai/claude-code")
-    except ProcessError as e:
-        raise RuntimeError(f"Claude CLI 執行失敗（exit {e.exit_code}）")
-    except CLIJSONDecodeError as e:
-        raise RuntimeError(f"Claude CLI 回應解析錯誤：{e}")
-    except CLIConnectionError as e:
-        raise RuntimeError(f"Claude CLI 連線錯誤：{e}")
-
-
-async def _agentic_meeting_to_calendar(transcript: str) -> str:
-    """模組 C 進階：把會議決議寫入 macOS 行事曆。"""
-    import subprocess
-    from datetime import datetime
-    from claude_agent_sdk import (
-        query,
-        tool,
-        create_sdk_mcp_server,
-        ClaudeAgentOptions,
-        HookMatcher,
-    )
-
-    @tool(
-        "add_to_calendar",
-        "把單一決議事項或待辦寫入 macOS 行事曆。datetime 格式必須為 YYYY-MM-DD HH:MM。",
-        {"title": str, "datetime": str, "notes": str},
-    )
-    def _as_quote(s: str) -> str:
-        # AppleScript 字串字面值轉義：壓平換行 → escape backslash → escape quote
-        s = s.replace("\r", "").replace("\n", " ")
-        s = s.replace("\\", "\\\\").replace('"', '\\"')
-        return '"' + s + '"'
-
-    async def add_to_calendar(args):
-        try:
-            dt = datetime.strptime(args["datetime"], "%Y-%m-%d %H:%M")
-        except ValueError:
-            return {"content": [{"type": "text", "text": f"❌ 日期格式錯誤：{args['datetime']}"}]}
-        if dt < datetime.now():
-            return {"content": [{"type": "text", "text": f"❌ 日期已過：{args['datetime']}（agent 應重新推算未來時間）"}]}
-        script = f'''tell application "Calendar"
-    set theDate to current date
-    set year of theDate to {dt.year}
-    set month of theDate to {dt.month}
-    set day of theDate to {dt.day}
-    set hours of theDate to {dt.hour}
-    set minutes of theDate to {dt.minute}
-    set seconds of theDate to 0
-    set endDate to theDate + 60 * 60
-    tell calendar 1
-        make new event with properties {{summary:{_as_quote(args["title"])}, start date:theDate, end date:endDate, description:{_as_quote(args["notes"])}}}
-    end tell
-end tell'''
-        try:
-            subprocess.run(
-                ["osascript", "-"],
-                input=script,
-                check=True, capture_output=True, timeout=15, text=True,
-            )
-            return {"content": [{"type": "text", "text": f"✅ 已加入：{args['title']} @ {args['datetime']}"}]}
-        except subprocess.CalledProcessError as e:
-            return {"content": [{"type": "text", "text": f"❌ 加入失敗：{e.stderr or str(e)}"}]}
-        except subprocess.TimeoutExpired:
-            return {"content": [{"type": "text", "text": "❌ Calendar 沒回應（可能權限未授予）"}]}
-
-    async def log_calendar_event(input_data, tool_use_id, context):
-        ti = input_data.get("tool_input", {})
-        log_path = BASE / "data" / "audit_calendar.log"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(log_path, "a", encoding="utf-8") as f:
-            f.write(
-                f"{datetime.now().isoformat()}\t"
-                f"{ti.get('datetime','')}\t{ti.get('title','')}\n"
-            )
-        return {}
-
-    server = create_sdk_mcp_server(name="cal", version="1.0.0", tools=[add_to_calendar])
-    today = datetime.now().strftime("%Y-%m-%d")
-    sys_prompt = f"""你是會議決議分派助理。從逐字稿萃取「決議事項」與「待辦」並逐一呼叫 add_to_calendar。
-
-今天日期：{today}
-
-規則：
-- 有明確日期 → 用該日期
-- 「下週 X」「月底」→ 合理推算
-- 沒提時間 → 用相關日期 14:00
-- 純粹「報告」「分享」「討論」沒有要做的事 → 不要加
-- title 簡短（< 30 字），notes 寫負責人 + 完整脈絡
-
-完成所有 add_to_calendar 呼叫後，總結：
-- 共寫入 N 筆
-- 條列每筆：標題 + 時間 + 負責人
-- 列出「未寫入但值得追蹤」的事項（如果有）
-"""
-    options = ClaudeAgentOptions(
-        system_prompt=sys_prompt,
-        mcp_servers={"cal": server},
-        allowed_tools=["mcp__cal__add_to_calendar"],
-        disallowed_tools=[
-            "Read", "Write", "Edit", "Bash",
-            "Glob", "Grep", "WebSearch", "WebFetch",
-        ],
-        setting_sources=[],
-        hooks={
-            "PostToolUse": [
-                HookMatcher(
-                    matcher="mcp__cal__add_to_calendar",
-                    hooks=[log_calendar_event],
-                ),
-            ],
-        },
-        model="claude-sonnet-4-5",
-        max_turns=20,
-    )
-    chunks = []
-    async for msg in query(prompt=f"逐字稿：\n\n{transcript}", options=options):
-        text = _extract_assistant_text(msg)
-        if text:
-            chunks.append(text)
-    return "\n\n".join(chunks) if chunks else "（無回應）"
-
-
-def call_claude_agentic_meeting_to_calendar(transcript: str) -> str:
-    import anyio
-    from claude_agent_sdk import (
-        CLINotFoundError, CLIConnectionError, ProcessError, CLIJSONDecodeError,
-    )
-    try:
-        return anyio.run(_agentic_meeting_to_calendar, transcript)
-    except CLINotFoundError:
-        raise RuntimeError("找不到 Claude Code CLI，請執行：npm i -g @anthropic-ai/claude-code")
-    except ProcessError as e:
-        raise RuntimeError(f"Claude CLI 執行失敗（exit {e.exit_code}）")
-    except CLIJSONDecodeError as e:
-        raise RuntimeError(f"Claude CLI 回應解析錯誤：{e}")
-    except CLIConnectionError as e:
-        raise RuntimeError(f"Claude CLI 連線錯誤：{e}")
 
 
 ensure_db()
@@ -778,16 +443,21 @@ with tab_a:
             spinner_msg = "查詢真實條文中..." if proc_agent_mode else "查詢中..."
             with st.spinner(spinner_msg):
                 if API_MODE == "live" and manual_ask:
+                    try:
+                        q_clean = validate_user_input(q, "問題", MEDIUM_MAX_CHARS)
+                    except InputValidationError as e:
+                        st.error(str(e))
+                        st.stop()
                     ctx = f"本校 context:{school_name} / 校長 {principal}"
                     ans = ""
                     if proc_agent_mode:
                         try:
-                            ans = call_claude_agentic_procurement(load_prompt("procurement_qa.md"), q, ctx)
+                            ans = call_claude_agentic_procurement(load_prompt("procurement_qa.md"), q_clean, ctx)
                             st.success("🔬 RAG 模式：已查詢採購法彙編（35 版 684 頁）")
                         except RuntimeError as e:
                             st.error(f"❌ 進階模式失敗：{e}")
                     else:
-                        ans = call_claude(load_prompt("procurement_qa.md"), q, ctx)
+                        ans = call_claude(load_prompt("procurement_qa.md"), q_clean, ctx)
                     if ans:
                         st.markdown(ans)
                 else:
@@ -845,13 +515,20 @@ with tab_b:
     auto_trigger = st.session_state.pop("doc_auto_show", False)
     if (manual_gen or auto_trigger):
         if API_MODE == "live" and manual_gen and not auto_trigger:
+            try:
+                doc_subject_v = validate_user_input(doc_subject, "事由", SHORT_MAX_CHARS)
+                doc_target_v = validate_user_input(doc_target, "受文者", SHORT_MAX_CHARS)
+                doc_facts_v = validate_user_input(doc_facts, "關鍵事實", MEDIUM_MAX_CHARS)
+            except InputValidationError as e:
+                st.error(str(e))
+                st.stop()
             with st.spinner("撰寫中..."):
-                user_prompt = f"""事由:{doc_subject}
-受文者:{doc_target}
+                user_prompt = f"""事由:{doc_subject_v}
+受文者:{doc_target_v}
 類型:{doc_type}
 對象層級:{doc_tone}
 關鍵事實:
-{doc_facts}
+{doc_facts_v}
 
 請依三段式產出公文草稿。"""
                 ctx = f"本校 context:學校名稱 {school_name}、地址 {school_addr}、電話 {school_phone}、校長 {principal}"
@@ -912,11 +589,16 @@ with tab_c:
         else:
             with st.spinner("分析中..."):
                 if API_MODE == "live" and transcript.strip() and not auto_trigger_meet:
-                    user_prompt = f"會議類型:{meet_type}\n\n逐字稿:\n{transcript}"
+                    try:
+                        transcript_v = validate_user_input(transcript, "逐字稿")
+                    except InputValidationError as e:
+                        st.error(str(e))
+                        st.stop()
+                    user_prompt = f"會議類型:{meet_type}\n\n逐字稿:\n{transcript_v}"
                     ans = call_claude(load_prompt("meeting_summary.md"), user_prompt)
                     st.markdown(ans)
                     # 記住逐字稿讓「寫入行事曆」按鈕可用
-                    st.session_state["meet_last_transcript"] = transcript
+                    st.session_state["meet_last_transcript"] = transcript_v
                 else:
                     demo = load_demo("meeting_demo.md")
                     if "**預期輸出**" in demo:
