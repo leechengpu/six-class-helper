@@ -407,11 +407,11 @@ with tab_a:
     st.markdown("**⚡ 1-click 示範**（點下去直接看 AI 分析）")
     ex_col1, ex_col2 = st.columns(2)
     with ex_col1:
-        if st.button("⚡ 45 萬平板採購簽呈審查", use_container_width=True, key="proc_demo_1"):
+        if st.button("⚡ 45 萬平板採購簽呈審查", width="stretch", key="proc_demo_1"):
             st.session_state["proc_q"] = "總務主任想採購 30 台平板給五六年級,總金額 45 萬,請問要走什麼程序?有什麼要注意?"
             st.session_state["proc_auto_show"] = "tablet"
     with ex_col2:
-        if st.button("⚡ 邀 3 家只回 1 家能議價嗎", use_container_width=True, key="proc_demo_2"):
+        if st.button("⚡ 邀 3 家只回 1 家能議價嗎", width="stretch", key="proc_demo_2"):
             st.session_state["proc_q"] = "公告金額以下採購,我邀請了 3 家廠商報價,結果只有 1 家回覆,可以直接跟他議價嗎?"
             st.session_state["proc_auto_show"] = "vendor"
 
@@ -502,11 +502,11 @@ with tab_b:
     st.markdown("**⚡ 1-click 示範**（點下去直接看 30 秒生成的公文草稿）")
     ex1, ex2 = st.columns(2)
     with ex1:
-        if st.button("⚡ 申請操場跑道整修補助", use_container_width=True, key="doc_demo_1"):
+        if st.button("⚡ 申請操場跑道整修補助", width="stretch", key="doc_demo_1"):
             st.session_state["demo_show"] = "track"
             st.session_state["doc_auto_show"] = True
     with ex2:
-        if st.button("⚡ 邀廠商到校進行設備簡報", use_container_width=True, key="doc_demo_2"):
+        if st.button("⚡ 邀廠商到校進行設備簡報", width="stretch", key="doc_demo_2"):
             st.session_state["demo_show"] = "vendor"
             st.session_state["doc_auto_show"] = True
 
@@ -636,7 +636,7 @@ with tab_d:
                 sub = meta_df[meta_df["category"] == category][
                     ["field_name", "field_value", "last_updated"]
                 ].rename(columns={"field_name": "欄位", "field_value": "值", "last_updated": "更新日期"})
-                st.dataframe(sub, use_container_width=True, hide_index=True)
+                st.dataframe(sub, width="stretch", hide_index=True)
 
 
 st.divider()
