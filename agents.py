@@ -8,11 +8,14 @@ Streamlit Cloud 沒有 claude CLI，UI 端會自動隱藏切換鈕。
   - call_claude_agentic_procurement(): 採購法 RAG agent
   - call_claude_agentic_meeting_to_calendar(): 會議決議寫入 macOS 行事曆
 """
+import time
 from datetime import datetime
 from pathlib import Path
 
 from config import CLAUDE_MODEL
+from logger import get_logger
 
+log = get_logger("agent")
 BASE = Path(__file__).parent
 
 
@@ -131,15 +134,23 @@ def call_claude_agentic_procurement(system_prompt: str, user_prompt: str, contex
     from claude_agent_sdk import (
         CLINotFoundError, CLIConnectionError, ProcessError, CLIJSONDecodeError,
     )
+    start = time.monotonic()
+    log.info("procurement agent start (q_len=%d)", len(user_prompt))
     try:
-        return anyio.run(_agentic_procurement_query, system_prompt, user_prompt, context)
+        result = anyio.run(_agentic_procurement_query, system_prompt, user_prompt, context)
+        log.info("procurement agent OK %.2fs (out_len=%d)", time.monotonic() - start, len(result))
+        return result
     except CLINotFoundError:
+        log.error("procurement agent: claude CLI not found")
         raise RuntimeError("找不到 Claude Code CLI，請執行：npm i -g @anthropic-ai/claude-code")
     except ProcessError as e:
+        log.error("procurement agent ProcessError exit=%s after %.2fs", e.exit_code, time.monotonic() - start)
         raise RuntimeError(f"Claude CLI 執行失敗（exit {e.exit_code}）")
     except CLIJSONDecodeError as e:
+        log.error("procurement agent JSON decode error after %.2fs: %s", time.monotonic() - start, e)
         raise RuntimeError(f"Claude CLI 回應解析錯誤：{e}")
     except CLIConnectionError as e:
+        log.error("procurement agent connection error after %.2fs: %s", time.monotonic() - start, e)
         raise RuntimeError(f"Claude CLI 連線錯誤：{e}")
 
 
@@ -259,13 +270,21 @@ def call_claude_agentic_meeting_to_calendar(transcript: str) -> str:
     from claude_agent_sdk import (
         CLINotFoundError, CLIConnectionError, ProcessError, CLIJSONDecodeError,
     )
+    start = time.monotonic()
+    log.info("calendar agent start (transcript_len=%d)", len(transcript))
     try:
-        return anyio.run(_agentic_meeting_to_calendar, transcript)
+        result = anyio.run(_agentic_meeting_to_calendar, transcript)
+        log.info("calendar agent OK %.2fs (out_len=%d)", time.monotonic() - start, len(result))
+        return result
     except CLINotFoundError:
+        log.error("calendar agent: claude CLI not found")
         raise RuntimeError("找不到 Claude Code CLI，請執行：npm i -g @anthropic-ai/claude-code")
     except ProcessError as e:
+        log.error("calendar agent ProcessError exit=%s after %.2fs", e.exit_code, time.monotonic() - start)
         raise RuntimeError(f"Claude CLI 執行失敗（exit {e.exit_code}）")
     except CLIJSONDecodeError as e:
+        log.error("calendar agent JSON decode error after %.2fs: %s", time.monotonic() - start, e)
         raise RuntimeError(f"Claude CLI 回應解析錯誤：{e}")
     except CLIConnectionError as e:
+        log.error("calendar agent connection error after %.2fs: %s", time.monotonic() - start, e)
         raise RuntimeError(f"Claude CLI 連線錯誤：{e}")
