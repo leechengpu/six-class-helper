@@ -51,3 +51,16 @@ CREATE TABLE IF NOT EXISTS filing_history (
 CREATE INDEX IF NOT EXISTS idx_filing_system ON filing_history(system_name);
 CREATE INDEX IF NOT EXISTS idx_filing_form ON filing_history(form_name);
 CREATE INDEX IF NOT EXISTS idx_students_year ON students_stats(academic_year);
+
+-- 使用事件記錄表（餵 📈 使用統計 tab）
+CREATE TABLE IF NOT EXISTS usage_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    module TEXT NOT NULL,         -- procurement / official_doc / meeting
+    event_type TEXT NOT NULL,     -- query / generate / summarize
+    api_mode TEXT,                -- live / demo
+    minutes_saved INTEGER         -- 估每次省時（分鐘）
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_at ON usage_events(event_at);
+CREATE INDEX IF NOT EXISTS idx_events_module ON usage_events(module);

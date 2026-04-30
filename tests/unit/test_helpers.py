@@ -62,15 +62,36 @@ class TestEnsureDb:
         finally:
             conn.close()
 
-    def test_idempotent_when_db_exists(self, tmp_path, monkeypatch):
+    def test_skips_seed_when_db_exists(self, tmp_path, monkeypatch):
+        """既有 DB 不該重塞 seed（不然 demo 資料會翻倍）。"""
         db_path = tmp_path / "school.db"
-        db_path.touch()
-        original_mtime = db_path.stat().st_mtime
+        schema = tmp_path / "schema.sql"
+        seed = tmp_path / "seed.sql"
+
+        schema.write_text(
+            "CREATE TABLE IF NOT EXISTS school_meta (id INTEGER PRIMARY KEY, field_name TEXT UNIQUE, field_value TEXT);",
+            encoding="utf-8",
+        )
+        seed.write_text(
+            "INSERT INTO school_meta (field_name, field_value) VALUES ('school_name', '測試國小');",
+            encoding="utf-8",
+        )
 
         monkeypatch.setattr("db.DB_PATH", db_path)
-        ensure_db()  # 不該動已存在的檔
+        monkeypatch.setattr("db.SCHEMA_SQL", schema)
+        monkeypatch.setattr("db.SEED_SQL", seed)
 
-        assert db_path.stat().st_mtime == original_mtime
+        ensure_db()  # 第一次：建檔 + seed
+        ensure_db()  # 第二次：schema 重跑 idempotent，但不能再 seed
+
+        conn = sqlite3.connect(str(db_path))
+        try:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM school_meta WHERE field_name='school_name'"
+            ).fetchone()[0]
+            assert count == 1, "seed 不該被重塞"
+        finally:
+            conn.close()
 
     def test_runs_seed_sql_if_present(self, tmp_path, monkeypatch):
         db_path = tmp_path / "school.db"

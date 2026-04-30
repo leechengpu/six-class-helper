@@ -7,6 +7,13 @@ from agents import (
 )
 from claude_client import call_claude, get_api_mode
 from db import ensure_db, load_meta, meta_value
+from events import (
+    MODULE_LABELS,
+    get_daily_counts,
+    get_event_counts,
+    get_total_minutes_saved,
+    log_event,
+)
 from prompts import load_demo, load_prompt
 from validators import (
     InputValidationError,
@@ -159,8 +166,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-tab_home, tab_arch, tab_a, tab_b, tab_c, tab_d = st.tabs(
-    ["📊 校長儀表板", "🏛️ 系統架構", "📋 採購法顧問", "📝 公文草稿", "🎙️ 會議記錄", "🏫 本校資料"]
+tab_home, tab_arch, tab_a, tab_b, tab_c, tab_d, tab_stats = st.tabs(
+    ["📊 校長儀表板", "🏛️ 系統架構", "📋 採購法顧問", "📝 公文草稿", "🎙️ 會議記錄", "🏫 本校資料", "📈 使用統計"]
 )
 
 # ===== 校長儀表板（首頁）=====
@@ -460,8 +467,10 @@ with tab_a:
                         ans = call_claude(load_prompt("procurement_qa.md"), q_clean, ctx)
                     if ans:
                         st.markdown(ans)
+                        log_event("procurement", "query", "live")
                 else:
                     demo = load_demo("procurement_demo.md")
+                    log_event("procurement", "query", "demo")
                     # 判斷情境:auto_case 優先,否則從文字推
                     case = auto_case
                     if not case:
@@ -534,8 +543,10 @@ with tab_b:
                 ctx = f"本校 context:學校名稱 {school_name}、地址 {school_addr}、電話 {school_phone}、校長 {principal}"
                 ans = call_claude(load_prompt("official_doc.md"), user_prompt, ctx)
                 st.markdown(ans)
+                log_event("official_doc", "generate", "live")
         else:
             demo = load_demo("official_doc_demo.md")
+            log_event("official_doc", "generate", "demo")
             which = st.session_state.get("demo_show", "track")
             if which == "track":
                 part = demo.split("## 案例 2")[0]
@@ -599,8 +610,10 @@ with tab_c:
                     st.markdown(ans)
                     # 記住逐字稿讓「寫入行事曆」按鈕可用
                     st.session_state["meet_last_transcript"] = transcript_v
+                    log_event("meeting", "summarize", "live")
                 else:
                     demo = load_demo("meeting_demo.md")
+                    log_event("meeting", "summarize", "demo")
                     if "**預期輸出**" in demo:
                         part = demo.split("**預期輸出**:")[1]
                     else:
@@ -637,6 +650,57 @@ with tab_d:
                     ["field_name", "field_value", "last_updated"]
                 ].rename(columns={"field_name": "欄位", "field_value": "值", "last_updated": "更新日期"})
                 st.dataframe(sub, width="stretch", hide_index=True)
+
+
+# ===== 模組 E:使用統計 =====
+with tab_stats:
+    st.subheader("📈 使用統計")
+    st.caption("AI 副手分擔的工作量 — 累計次數 × 估省時")
+
+    counts = get_event_counts()
+    total_minutes = get_total_minutes_saved()
+    proc_n = counts.get("procurement", 0)
+    doc_n = counts.get("official_doc", 0)
+    meet_n = counts.get("meeting", 0)
+    total_n = proc_n + doc_n + meet_n
+
+    s1, s2, s3, s4 = st.columns(4)
+    with s1:
+        st.metric("⚖️ 採購法諮詢", f"{proc_n} 次", help="估每次省 30 分鐘")
+    with s2:
+        st.metric("📝 公文草稿", f"{doc_n} 次", help="估每次省 15 分鐘")
+    with s3:
+        st.metric("🎙️ 會議摘要", f"{meet_n} 次", help="估每次省 25 分鐘")
+    with s4:
+        hours = total_minutes // 60
+        mins = total_minutes % 60
+        st.metric(
+            "⏱️ 累計估省時",
+            f"{hours} 小時 {mins} 分" if hours else f"{total_minutes} 分鐘",
+            help=f"基於累計 {total_n} 次使用 × 各模組估值",
+        )
+
+    st.markdown("**📅 近 7 天使用趨勢**")
+    daily = get_daily_counts(days=7)
+    if daily["次數"].sum() > 0:
+        st.bar_chart(daily.set_index("日期"), height=200)
+    else:
+        st.info("近 7 天還沒事件 — 去其他 tab 點幾次 1-click 示範就會出現")
+
+    st.divider()
+    st.markdown("**💡 給合作夥伴的展示重點**")
+    # 換算每年估省時：14 天累計 × 365/14 × 50 校
+    annual_per_school = (total_minutes / 60) * (365 / 14)  # 一校一年
+    annual_50_schools = int(annual_per_school * 50)
+    st.markdown(
+        f"""
+- 一個 6 班 78 名學生的小校，校長一人面對 **13 條管考線**，本系統覆蓋其中 **3 條**
+  （採購、公文、會議）= 23% 覆蓋率
+- 近 14 天累計 {total_n} 次使用 ≈ **{total_minutes // 60} 小時**人工時間，相當於 {total_minutes // (60 * 8)} 個工作天
+- 線性外推：一校一年估省 **{int(annual_per_school)} 小時**；
+  全縣若有 50 所小校採用 → 估省 **{annual_50_schools:,} 小時/年**
+"""
+    )
 
 
 st.divider()
